@@ -266,3 +266,52 @@ test('播放时当前安全半径随关键帧插值实时呈现（stateAt）', a
   assert.ok(Math.abs(st.r - 40) < 1e-9, `t=6 插值半径应为 40，实际 ${st.r}`);
   dom.window.close();
 });
+
+test('逐对列表按最小安全余量升序，并展示余量与可点击的发生时刻', async () => {
+  const dom = await boot();
+  const { window } = dom;
+  const doc = window.document;
+
+  const rows = [...doc.querySelectorAll('.pair-row')];
+  assert.equal(rows.length, 6);
+  // 每个 pair-row 都有最小余量与 seek-chip
+  rows.forEach((row) => {
+    assert.match(row.textContent, /最小余量/);
+    assert.equal(row.querySelectorAll('.seek-chip').length, 1);
+  });
+  // 引擎顺序：丙×丁(-50) 最紧在首行，甲×乙(-40) 次之，安全对在后
+  assert.match(rows[0].textContent, /丙[\s\S]*丁/);
+  assert.match(rows[1].textContent, /甲[\s\S]*乙/);
+  assert.match(rows[0].textContent, /-50\.00/);
+  assert.match(rows[1].textContent, /-40\.00/);
+  // 摘要面板全局最小余量 -50 @ 8s
+  assert.match(doc.getElementById('sum-margin').textContent, /-50\.00/);
+  assert.match(doc.getElementById('sum-margin-who').textContent, /8\.00\s*s/);
+
+  // 点击首行（丙×丁）的最小余量时刻按钮：播放头跳到 t=8 并刷新画布
+  const chip = rows[0].querySelector('.seek-chip');
+  chip.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  await new Promise((r) => setTimeout(r, 10));
+  const tv = Number(doc.getElementById('time-input').value);
+  assert.ok(Math.abs(tv - 8) < 1e-6, `点击余量时刻应跳转 8s，实际 ${tv}`);
+  dom.window.close();
+});
+
+test('点击摘要面板全局最小余量数值同样跳转播放头', async () => {
+  const dom = await boot();
+  const { window } = dom;
+  const doc = window.document;
+
+  // 先跳到 0，再点击全局余量数值（样例最紧时刻 t=8）
+  const tl = doc.getElementById('timeline');
+  const rect = doc.getElementById('timeline-lanes').getBoundingClientRect();
+  tl.dispatchEvent(new window.MouseEvent('click', {
+    bubbles: true, clientX: rect.left + 2, clientY: rect.top + 5
+  }));
+  assert.ok(Math.abs(Number(doc.getElementById('time-input').value)) < 0.1);
+
+  doc.getElementById('sum-margin').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  await new Promise((r) => setTimeout(r, 10));
+  assert.ok(Math.abs(Number(doc.getElementById('time-input').value) - 8) < 1e-6);
+  dom.window.close();
+});

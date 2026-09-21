@@ -290,3 +290,182 @@ test('内置样例含关键帧半径且不改变原有碰撞结论', () => {
   assert.equal(p34.collision, true);
   approx(p34.firstContact, 2.60, 0.02);
 });
+
+// ---------- 最小安全余量 minMargin = min distance(t)-[rA(t)+rB(t)] ----------
+
+test('最小余量：相向贯穿且各有半径，余量最小值为负半径和，发生在相遇中点', () => {
+  // A: 0→100，B: 100→0，各 r=10；t=5 重合：余量 0-20=-20
+  const a = { id: 'a', radius: 10, keys: [{ t: 0, x: 0, y: 0 }, { t: 10, x: 100, y: 0 }] };
+  const b = { id: 'b', radius: 10, keys: [{ t: 0, x: 100, y: 0 }, { t: 10, x: 0, y: 0 }] };
+  const r = core.analyzePair(a, b, T);
+  approx(r.minMargin, -20, 1e-7, '最大侵入量 = 半径和负值');
+  approx(r.minMarginT, 5, 1e-7, '发生在相遇中点');
+});
+
+test('最小余量：相切时刻余量恰好为 0', () => {
+  // A 水平经过 y=10，B 静止 (50,0) r=10，rA=0 → t=5 相切
+  const a = { id: 'a', radius: 0, keys: [{ t: 0, x: 0, y: 10 }, { t: 10, x: 100, y: 10 }] };
+  const b = { id: 'b', radius: 10, keys: [{ t: 0, x: 50, y: 0 }] };
+  const r = core.analyzePair(a, b, T);
+  approx(r.minMargin, 0, 1e-7, '相切余量为 0');
+  approx(r.minMarginT, 5, 1e-7);
+  assert.equal(r.collision, true, '余量 0 等价于碰撞（相切）');
+});
+
+test('最小余量：相对静止恒重叠，余量为常数且全程相等（取最早时刻 0）', () => {
+  // 同速平行，距离恒 40，半径和恒 50 → 余量恒 -10
+  const a = { id: 'a', radius: 30, keys: [{ t: 0, x: 0, y: 0 }, { t: 12, x: 120, y: 0 }] };
+  const b = { id: 'b', radius: 20, keys: [{ t: 0, x: 0, y: 40 }, { t: 12, x: 120, y: 40 }] };
+  const r = core.analyzePair(a, b, T);
+  approx(r.minMargin, -10, 1e-7, '恒量余量 = 40-50');
+  approx(r.minMarginT, 0, 1e-7, '余量全程相等取最早时刻');
+});
+
+test('最小余量：相对静止且距离为零（完全重合），余量为负半径和', () => {
+  const a = { id: 'a', radius: 20, keys: [{ t: 0, x: 35, y: 12 }] };
+  const b = { id: 'b', radius: 15, keys: [{ t: 0, x: 35, y: 12 }] };
+  const r = core.analyzePair(a, b, T);
+  approx(r.minDistance, 0, 1e-9);
+  approx(r.minMargin, -35, 1e-9, '完全重合：0-(20+15)');
+  approx(r.minMarginT, 0, 1e-9);
+});
+
+test('最小余量：保持净距不碰撞，余量为正且等于最近间距减半径和', () => {
+  // A 水平，B 静止 (50,30)，各 r=10：最近距离 30，余量 10
+  const a = { id: 'a', radius: 10, keys: [{ t: 0, x: 0, y: 0 }, { t: 10, x: 100, y: 0 }] };
+  const b = { id: 'b', radius: 10, keys: [{ t: 0, x: 50, y: 30 }] };
+  const r = core.analyzePair(a, b, T);
+  assert.equal(r.collision, false);
+  approx(r.minMargin, 10, 1e-7, '净空间隙 30-20');
+  approx(r.minMarginT, 5, 1e-7);
+});
+
+test('最小余量：相对静止 + 可变半径线性张开，余量为一次函数，最小值在张满端点', () => {
+  // 两人静止相距 30；A 半径 t∈[2,6] 由 10 升到 50，B 恒 10
+  // 余量 g=30-(rA+10)：t≤2 恒 10，张开段 30-10t，t=6 时 30-60=-30 最小
+  const a = {
+    id: 'a', radius: 10,
+    keys: [{ t: 0, x: 0, y: 0, r: 10 }, { t: 2, x: 0, y: 0, r: 10 }, { t: 6, x: 0, y: 0, r: 50 }]
+  };
+  const b = { id: 'b', radius: 10, keys: [{ t: 0, x: 30, y: 0 }] };
+  const r = core.analyzePair(a, b, 8);
+  approx(r.minMargin, -30, 1e-7, '张满端点侵入最深');
+  approx(r.minMarginT, 6, 1e-7);
+  assert.equal(r.collision, true);
+});
+
+test('最小余量：距离为零 + 可变半径（穿过张开者中心），尖点处取最小', () => {
+  // A 静止原点，半径 t∈[0,10] 由 20 升到 40；B 从 (0,0) 走到 (100,0)，r=20
+  // t=0 距离 0、半径和 40 → 余量 -40（尖点）；之后距离 10t、半径和 40+2t，余量回升
+  const a = {
+    id: 'a', radius: 20,
+    keys: [{ t: 0, x: 0, y: 0, r: 20 }, { t: 10, x: 0, y: 0, r: 40 }]
+  };
+  const b = { id: 'b', radius: 20, keys: [{ t: 0, x: 0, y: 0 }, { t: 10, x: 100, y: 0 }] };
+  const r = core.analyzePair(a, b, 10);
+  approx(r.minMargin, -40, 1e-7, '距离为零尖点：0-40');
+  approx(r.minMarginT, 0, 1e-7);
+});
+
+test('最小余量：驻点位于段内部（接近速度等于半径张开速度）时精确取最小', () => {
+  // A 静止原点，半径 t∈[0,10] 由 20 线性升到 40；B r=20 从 (0,30) 以 10/s
+  // 走向 (100,30) → 距离 sqrt((10t)^2+30^2)，半径和 40+2t。
+  // 驻点条件 100t/sqrt(100t²+900)=2 → t²=3/8 → t*=√(3/8)≈0.6124；
+  // 该点 g≈-10.606，比左端点 g(0)=-10 更小——最小值在段内部而非端点。
+  const a = {
+    id: 'a', radius: 20,
+    keys: [{ t: 0, x: 0, y: 0, r: 20 }, { t: 10, x: 0, y: 0, r: 40 }]
+  };
+  const b = { id: 'b', radius: 20, keys: [{ t: 0, x: 0, y: 30 }, { t: 10, x: 100, y: 30 }] };
+  const r = core.analyzePair(a, b, 10);
+  const tStar = Math.sqrt(3 / 8);
+  const gMin = Math.sqrt(100 * tStar * tStar + 900) - 40 - 2 * tStar;
+  approx(r.minMargin, gMin, 1e-6, '段内驻点余量（负，侵入）');
+  approx(r.minMarginT, tStar, 1e-6, '驻点时刻 sqrt(3/8)');
+  assert.equal(r.collision, true, '驻点余量为负，属碰撞');
+  assert.ok(r.minMargin < -10 - 1e-6, '驻点余量应严格小于左端点 -10');
+});
+
+test('最小余量：段内驻点给出正的净空间隙最小值（无碰撞）', () => {
+  // 同上但 B 半径为 0：半径和 20+2t，g(0)=30-20=10；驻点同为 √(3/8)，
+  // g* = 25√6/2 - 20 - √6/2 = 12√6 - 20 ≈ 9.394 < 10，仍为正 → 全程安全。
+  const a = {
+    id: 'a', radius: 20,
+    keys: [{ t: 0, x: 0, y: 0, r: 20 }, { t: 10, x: 0, y: 0, r: 40 }]
+  };
+  const b = { id: 'b', radius: 0, keys: [{ t: 0, x: 0, y: 30 }, { t: 10, x: 100, y: 30 }] };
+  const r = core.analyzePair(a, b, 10);
+  approx(r.minMargin, 12 * Math.sqrt(6) - 20, 1e-6, '正的驻点余量');
+  approx(r.minMarginT, Math.sqrt(3 / 8), 1e-6);
+  assert.equal(r.collision, false);
+  assert.ok(r.minMargin > 0 && r.minMargin < 10 - 1e-6, '驻点正余量应小于左端点 10');
+});
+
+test('最小余量：跨关键帧分段时取全时域全局最小', () => {
+  // A 三段折线，B 静止 (60,0) r=10；A r=10：
+  // t∈[0,4] (0,0)→(100,0)，t∈[4,8] 折返回 (0,0)，t∈[8,12] 再去 (100,0)
+  // 每次经过 x=60 都更近，但半径恒定，最小余量 = |60-60|-20 = -20，
+  // 第一次经过（最早）t=2.4
+  const a = {
+    id: 'a', radius: 10,
+    keys: [
+      { t: 0, x: 0, y: 0 }, { t: 4, x: 100, y: 0 },
+      { t: 8, x: 0, y: 0 }, { t: 12, x: 100, y: 0 }
+    ]
+  };
+  const b = { id: 'b', radius: 10, keys: [{ t: 0, x: 60, y: 0 }] };
+  const r = core.analyzePair(a, b, T);
+  approx(r.minMargin, -20, 1e-7);
+  approx(r.minMarginT, 2.4, 1e-7, '跨多段同值取最早发生时刻');
+});
+
+test('analyzeScene：pairs 按最小余量升序，顶层汇总全局最紧的一对', () => {
+  const r = core.analyzeScene(core.builtinScene());
+  assert.equal(r.pairCount, 6);
+  for (let i = 1; i < r.pairs.length; i++) {
+    assert.ok(r.pairs[i - 1].minMargin <= r.pairs[i].minMargin + 1e-12,
+      'pairs 必须按 minMargin 升序');
+  }
+  // 顶层字段即排序首对
+  const tight = r.pairs[0];
+  approx(r.minMargin, tight.minMargin, 1e-12);
+  approx(r.minMarginT, tight.minMarginT, 1e-12);
+  assert.deepEqual(r.minMarginPair, [tight.aId, tight.bId]);
+  // 甲乙 t=6 完全重合、半径和 40 → 最小余量 -40；丙丁持续重叠但侵入更浅
+  const p12 = r.pairs.find((p) => p.aId === 'p1' && p.bId === 'p2');
+  approx(p12.minMargin, -40, 1e-6, '甲乙重合：0-(20+20)');
+  approx(p12.minMarginT, 6, 1e-6);
+  // 安全对余量为正
+  const p13 = r.pairs.find((p) => p.aId === 'p1' && p.bId === 'p3');
+  assert.ok(p13.minMargin > 0, '错峰不碰的一对余量为正');
+});
+
+test('最小余量：随机批量场景下与 collision 布尔一致，且报告时刻处余量自洽', () => {
+  let seed = 7;
+  const rnd = () => { seed = (seed * 1103515245 + 12345) & 0x7fffffff; return seed / 0x7fffffff; };
+  for (let iter = 0; iter < 300; iter++) {
+    const TT = 4 + Math.floor(rnd() * 8);
+    const mk = () => {
+      const keys = [];
+      for (let k = 0; k < 3; k++) {
+        const key = { t: Math.round(rnd() * TT), x: Math.round(rnd() * 200), y: Math.round(rnd() * 200) };
+        if (rnd() < 0.4) key.r = Math.round(rnd() * 60);
+        keys.push(key);
+      }
+      keys.sort((x, y) => x.t - y.t);
+      return { id: 'x', radius: Math.round(rnd() * 30), keys };
+    };
+    const pa = mk();
+    const pb = mk();
+    const r = core.analyzePair(pa, pb, TT);
+    // |margin| 远离 0 时必须与 collision 布尔一致
+    if (Math.abs(r.minMargin) > 1e-6) {
+      assert.equal(r.minMargin < 0, r.collision, `iter ${iter} margin=${r.minMargin}`);
+    }
+    // 报告时刻处直接求值应与 minMargin 吻合（自洽性）
+    const sa = core.stateAt(pa.keys, r.minMarginT, pa.radius);
+    const sb = core.stateAt(pb.keys, r.minMarginT, pb.radius);
+    const g = Math.hypot(sa.x - sb.x, sa.y - sb.y) - sa.r - sb.r;
+    approx(g, r.minMargin, 1e-5, `iter ${iter} 报告时刻余量自洽`);
+  }
+});

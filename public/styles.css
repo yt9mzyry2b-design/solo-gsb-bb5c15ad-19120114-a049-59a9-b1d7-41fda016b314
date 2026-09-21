@@ -332,6 +332,31 @@ input:focus { outline: none; border-color: var(--accent); }
   margin: 1px 4px 1px 0;
 }
 
+/* 最小安全余量：≤0 红色侵入量，>0 绿色净间隙 */
+.pair-status .margin b { font-weight: 700; }
+.pair-status .margin.neg b { color: var(--danger); }
+.pair-status .margin.pos b { color: var(--ok); }
+
+/* 可点击的"最小余量时刻"跳转按钮 */
+.seek-chip {
+  display: inline-block;
+  font: inherit;
+  font-size: 11px;
+  background: rgba(88, 166, 255, .14);
+  border: 1px solid rgba(88, 166, 255, .5);
+  color: #9cc7ff;
+  border-radius: 4px;
+  padding: 0 6px;
+  margin: 1px 0;
+  cursor: pointer;
+  transition: background .12s, border-color .12s;
+}
+.seek-chip:hover { background: rgba(88, 166, 255, .3); border-color: var(--accent); color: #fff; }
+
+/* 摘要面板中可点击跳转的全局最小余量 */
+strong.seekable { cursor: pointer; text-decoration: underline dotted currentColor; text-underline-offset: 3px; }
+strong.seekable:hover { filter: brightness(1.25); }
+
 @media (max-width: 1080px) {
   .layout { grid-template-columns: 1fr; }
 }

@@ -68,6 +68,33 @@ test('POST /api/analyze：接受关键帧 r 并按可变半径解析（首碰 t=
   assert.ok(Math.abs(pair.radiusSumMax - 60) < 1e-9);
 });
 
+test('POST /api/analyze：返回最小安全余量及其发生时刻，pairs 按余量升序', async () => {
+  const scene = {
+    duration: 10,
+    performers: [
+      // 完全重合，余量 = -20
+      { id: 'a', name: '甲', radius: 10, keys: [{ t: 0, x: 0, y: 0 }] },
+      { id: 'b', name: '乙', radius: 10, keys: [{ t: 0, x: 0, y: 0 }] },
+      // 保持净距 50，半径和 20，余量 30
+      { id: 'c', name: '丙', radius: 10, keys: [{ t: 0, x: 50, y: 0 }] }
+    ]
+  };
+  const r = await postAnalyze(scene);
+  assert.equal(r.status, 200);
+  assert.equal(r.json.pairCount, 3);
+  // 排序：重合对（-20）在前，净距对（30）在后
+  assert.ok(Math.abs(r.json.pairs[0].minMargin - -20) < 1e-9);
+  assert.ok(Math.abs(r.json.pairs[0].minMarginT - 0) < 1e-9);
+  assert.ok(r.json.pairs[1].minMargin < r.json.pairs[2].minMargin + 1e-12);
+  for (const p of r.json.pairs) {
+    assert.ok(typeof p.minMargin === 'number', '每对返回 minMargin');
+    assert.ok(typeof p.minMarginT === 'number', '每对返回 minMarginT');
+  }
+  // 顶层汇总全局最紧的一对
+  assert.ok(Math.abs(r.json.minMargin - -20) < 1e-9);
+  assert.deepEqual(r.json.minMarginPair, ['a', 'b']);
+});
+
 test('POST /api/analyze：返回的 scene 中缺省 r 被解析为继承值，显式 r 原样保留', async () => {
   const r = await postAnalyze(baseScene());
   assert.equal(r.status, 200);

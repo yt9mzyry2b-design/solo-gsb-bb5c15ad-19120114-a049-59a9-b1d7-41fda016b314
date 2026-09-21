@@ -21,6 +21,20 @@
  * 二次项系数可正可负（半径快速张开时为负），统一按求根公式精确求解并
  * 钳制到重叠时间窗；再合并跨段相邻区间。全程没有任何离散帧抽样——
  * 解出的就是碰撞发生的精确时间区间。
+ *
+ * 最小安全余量 g(t) = |r(t)| - R(t)：在每个重叠段上连续、精确地求全局
+ * 最小值（同样不做时间抽样）。候选点只有三类：
+ *   1. 段端点（分段线性模型余量的极值必在端点或驻点）；
+ *   2. 相对轨迹最近点 t* = -u·v/|v|²（距离二次函数顶点；共线穿过时
+ *      它是 g(t) 的尖点——距离为零处不可导，必须显式计入）；
+ *   3. 段内驻点：g'(t) = (r·v)/|r| - d = 0。两边平方 (r·v)²=d²|r|²
+ *      并代入 r=u+vt，得到二次方程（记 α=|v|²-d²）
+ *      |v|²α t² + 2(u·v)α t + (u·v)² - d²|u|² = 0，
+ *      其判别式 = 4α d² (|u|²|v|²-(u·v)²)，仅当 |v|≥|d| 时有实
+ *      驻点（|v|<|d| 时接近速度恒小于半径张合速度，余量单调，端点足够）。
+ * 相对静止（v=0）时 g(t) 为一次函数（含距离恒为零的退化），只比端点；
+ * |v|=|d| 的渐近退化由顶点 + 端点覆盖。双指针扫描全部段，即得全时域
+ * 全局最小余量及其发生时刻；余量 ≤ 0 与碰撞判定严格一致。
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -33,6 +47,7 @@
 
   var EPS = 1e-9;          // 数值零容差
   var MERGE_EPS = 1e-6;    // 区间合并间隙（秒）
+  var MARGIN_TIE_EPS = 1e-8; // 最小余量并列判定（同值取最早时刻）
 
   function clamp(x, lo, hi) {
     return Math.min(hi, Math.max(lo, x));
@@ -272,9 +287,10 @@
 
   /**
    * 两人在同一时间窗 [lo, hi] 内各自线性运动、半径各自线性变化，
-   * 精确求碰撞时间区间。同时更新最小间距与半径和极值追踪对象。
+   * 精确求碰撞时间区间。同时更新最小几何间距、最小安全余量与半径和
+   * 极值追踪对象。所有极值均为连续解析求解，无时间抽样。
    */
-  function analyzeOverlap(sA, sB, lo, hi, minRef, rangeRef) {
+  function analyzeOverlap(sA, sB, lo, hi, minRef, marginRef, rangeRef) {
     // 相对运动 r(t) = u + v t
     var ux = sA.x0 - sB.x0;
     var uy = sA.y0 - sB.y0;
@@ -296,6 +312,58 @@
     var v2 = vx * vx + vy * vy;
     var u2 = ux * ux + uy * uy;
     var uv = ux * vx + uy * vy;
+
+    // —— 最小安全余量 g(t) = |r(t)| - R(t)：连续解析求段内全局最小值 ——
+    // 候选：两端点 + 相对轨迹最近点（顶点/尖点）+ 段内驻点。
+    // 余量在同值时取最早时刻（报告"首次达到最小余量"）。
+    function consider(t) {
+      if (t < lo - EPS || t > hi + EPS) return;
+      if (t < lo) t = lo;
+      if (t > hi) t = hi;
+      var dx = ux + vx * t;
+      var dy = uy + vy * t;
+      var g = Math.sqrt(dx * dx + dy * dy) - (c + d * t);
+      // 首个候选直接记录；之后严格更小者替换，同值取最早时刻
+      if (!isFinite(marginRef.margin) ||
+          g < marginRef.margin - MARGIN_TIE_EPS ||
+          (Math.abs(g - marginRef.margin) <= MARGIN_TIE_EPS && t < marginRef.t)) {
+        marginRef.margin = g;
+        marginRef.t = t;
+      }
+    }
+
+    consider(lo);
+    consider(hi);
+
+    if (v2 >= EPS) {
+      // 相对轨迹最近点（|r(t)|² 的顶点）；共线穿过时它是 g 的尖点
+      var tVert = clamp(-uv / v2, lo, hi);
+      consider(tVert);
+
+      // 段内驻点：g'(t)=0 ⇔ (r·v)/|r| = d。两边平方
+      // (r·v)² = d²|r|²，代入 r=u+vt 展开（α=|v|²-d²）：
+      //   |v|²α t² + 2(u·v)α t + (u·v)² - d²|u|² = 0
+      // 判别式 = 4α d² (|u|²|v|²-(u·v)²) ≥ 0 要求 α ≥ 0，
+      // 即 |v|≥|d| 才有驻点（|v|<|d| 时余量单调，端点已足够）；
+      // d=0 时重根恰为最近点 t*，共线时重根为尖点，均已另计。
+      // 平方会引入一个 (r·v)/|r|=-d 的伪根，但它不是 g 的驻点，
+      // 其函数值不可能低于真实最小值，一并求值不影响最小值结果。
+      var Am = v2 - d * d;
+      if (Am >= EPS) {
+        var A2 = v2 * Am;
+        var B2 = 2 * uv * Am;
+        var C2 = uv * uv - d * d * u2;
+        var discM = B2 * B2 - 4 * A2 * C2;
+        if (discM >= -EPS) {
+          if (discM < 0) discM = 0;
+          var sqM = Math.sqrt(discM);
+          consider((-B2 - sqM) / (2 * A2));
+          consider((-B2 + sqM) / (2 * A2));
+        }
+      }
+    }
+    // v=0（相对静止）：距离恒定，g(t) 为一次函数（距离为 0 时
+    // g=-R(t) 同样是一次函数），最小值必在端点，已覆盖。
 
     // —— 最小几何间距（抛物线 |r(t)|^2 的顶点/端点比较，与半径无关）——
     var tDist;
@@ -335,7 +403,9 @@
    * 返回 {
    *   aId,bId,aName,bName, radiusSum, radiusSumMin, radiusSumMax,
    *   intervals:[[t0,t1],...],     // 合并后的精确碰撞区间
-   *   minDistance, firstContact,   // 首次碰撞时刻（无则 null）
+   *   minDistance, minDistanceT,   // 全局最小几何间距及其时刻
+   *   minMargin, minMarginT,       // 全局最小安全余量 dist-(rA+rB) 及其时刻
+   *   firstContact,                // 首次碰撞时刻（无则 null）
    *   lastRelease
    * }
    */
@@ -349,6 +419,7 @@
 
     var raw = [];
     var minRef = { dist: Infinity, t: 0 };
+    var marginRef = { margin: Infinity, t: 0 };
     var rangeRef = { min: Infinity, max: -Infinity };
 
     var i = 0;
@@ -359,7 +430,7 @@
       var lo = Math.max(a.t0, b.t0);
       var hi = Math.min(a.t1, b.t1);
       if (hi - lo > EPS) {
-        var found = analyzeOverlap(a, b, lo, hi, minRef, rangeRef);
+        var found = analyzeOverlap(a, b, lo, hi, minRef, marginRef, rangeRef);
         for (var k = 0; k < found.length; k++) raw.push(found[k]);
       }
       if (a.t1 < b.t1 - EPS) i++;
@@ -370,6 +441,9 @@
     var intervals = mergeIntervals(raw);
     if (!isFinite(minRef.dist)) {
       minRef = { dist: 0, t: 0 };
+    }
+    if (!isFinite(marginRef.margin)) {
+      marginRef = { margin: -rSumBase, t: 0 };
     }
     if (!isFinite(rangeRef.min)) {
       rangeRef = { min: rSumBase, max: rSumBase };
@@ -386,6 +460,8 @@
       intervals: intervals,
       minDistance: minRef.dist,
       minDistanceT: minRef.t,
+      minMargin: marginRef.margin,
+      minMarginT: marginRef.t,
       firstContact: intervals.length ? intervals[0][0] : null,
       lastRelease: intervals.length ? intervals[intervals.length - 1][1] : null,
       collision: intervals.length > 0
@@ -394,6 +470,7 @@
 
   /**
    * 分析整个场景：枚举全部 C(n,2) 双人组合。
+   * pairs 按最小安全余量由小到大（最危险在前）稳定排序返回。
    * scene: { duration, performers:[performer...] }
    */
   function analyzeScene(scene) {
@@ -406,6 +483,8 @@
         pairs.push(analyzePair(ps[i], ps[j], duration));
       }
     }
+    // 按最小安全余量由小到大排序（同值保持枚举顺序，Array.sort 稳定）
+    pairs.sort(function (a, b) { return a.minMargin - b.minMargin; });
 
     var collisions = pairs.filter(function (p) {
       return p.collision;
@@ -418,6 +497,8 @@
     pairs.forEach(function (p) {
       if (!closestPair || p.minDistance < closestPair.minDistance) closestPair = p;
     });
+    // 排序后首对即全局最小余量
+    var tightestPair = pairs.length ? pairs[0] : null;
 
     return {
       duration: duration,
@@ -431,6 +512,11 @@
       minDistanceT: closestPair ? closestPair.minDistanceT : null,
       minDistancePair: closestPair
         ? [closestPair.aId, closestPair.bId]
+        : null,
+      minMargin: tightestPair ? tightestPair.minMargin : null,
+      minMarginT: tightestPair ? tightestPair.minMarginT : null,
+      minMarginPair: tightestPair
+        ? [tightestPair.aId, tightestPair.bId]
         : null
     };
   }

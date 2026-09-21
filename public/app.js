@@ -710,6 +710,8 @@
     var firstWho = document.getElementById('sum-first-who');
     var minEl = document.getElementById('sum-min');
     var minWho = document.getElementById('sum-min-who');
+    var marginEl = document.getElementById('sum-margin');
+    var marginWho = document.getElementById('sum-margin-who');
 
     if (a.firstContact === null) {
       firstEl.textContent = '无碰撞';
@@ -731,6 +733,21 @@
       return p.aId === a.minDistancePair[0] && p.bId === a.minDistancePair[1];
     });
     minWho.textContent = (cp ? cp.aName + ' × ' + cp.bName + ' @ ' + fmt(a.minDistanceT) + 's' : '—');
+
+    // 全局最小安全余量（≤0 即碰撞侵入量，>0 为净空间隙）；点击数值跳转发生时刻
+    marginEl.textContent = fmt(a.minMargin) + ' 单位';
+    marginEl.className = a.minMargin <= 0 ? 'danger seekable' : 'ok seekable';
+    marginEl.title = '点击跳转到最小余量时刻 ' + fmt(a.minMarginT) + 's';
+    marginEl.onclick = function () {
+      if (a.minMarginT !== null && a.minMarginT !== undefined) seek(a.minMarginT);
+    };
+    var mp = a.minMarginPair ? a.pairs.find(function (p) {
+      return p.aId === a.minMarginPair[0] && p.bId === a.minMarginPair[1];
+    }) : null;
+    marginWho.textContent = mp
+      ? mp.aName + ' × ' + mp.bName + ' @ ' + fmt(a.minMarginT) + 's'
+      : '—';
+    marginWho.style.color = a.minMargin <= 0 ? 'var(--danger)' : '';
   }
 
   function renderPairs() {
@@ -738,9 +755,9 @@
     box.innerHTML = '';
     if (!state.analysis) return;
 
+    // 引擎已按最小安全余量升序返回，这里再稳定排序保证一致（最危险在前）
     var ordered = state.analysis.pairs.slice().sort(function (a, b) {
-      if (a.collision !== b.collision) return a.collision ? -1 : 1;
-      return a.minDistance - b.minDistance;
+      return a.minMargin - b.minMargin;
     });
 
     function radiusSumText(pair) {
@@ -748,6 +765,15 @@
         return '半径和 ' + fmt(pair.radiusSum, 0);
       }
       return '半径和 ' + fmt(pair.radiusSumMin, 0) + '～' + fmt(pair.radiusSumMax, 0);
+    }
+
+    // 最小余量片段（值 + 发生时刻）；点击时刻跳转播放头
+    function marginHtml(pair) {
+      var sign = pair.minMargin <= 0 ? 'neg' : 'pos';
+      return '<span class="margin ' + sign + '">最小余量 <b>' + fmt(pair.minMargin) +
+        '</b></span> <button type="button" class="seek-chip" data-t="' +
+        pair.minMarginT.toFixed(4) + '" title="跳转到该对最小余量时刻并刷新画布">⏱ ' +
+        fmt(pair.minMarginT) + ' s ⏵</button>';
     }
 
     ordered.forEach(function (pair) {
@@ -776,12 +802,24 @@
           '<b>碰撞</b> · 首碰 <b>' + fmt(pair.firstContact) + '</b> s · 共 ' +
           pair.intervals.length + ' 段' +
           '<div class="interval-chips">' + chips + '</div>' +
-          '最小间距 <b>' + fmt(pair.minDistance) + '</b> @ ' + fmt(pair.minDistanceT) + 's · ' + radiusSumText(pair);
+          marginHtml(pair) +
+          ' · 最小间距 <b>' + fmt(pair.minDistance) + '</b> @ ' + fmt(pair.minDistanceT) +
+          's · ' + radiusSumText(pair);
       } else {
         status.innerHTML =
-          '<b>安全</b> · 最小间距 <b>' + fmt(pair.minDistance) + '</b> @ ' +
-          fmt(pair.minDistanceT) + 's（' + radiusSumText(pair) + '）';
+          '<b>安全</b> · ' + marginHtml(pair) +
+          '（最小间距 <b>' + fmt(pair.minDistance) + '</b> @ ' +
+          fmt(pair.minDistanceT) + 's · ' + radiusSumText(pair) + '）';
       }
+
+      // 点击最小余量时刻按钮：跳转播放头并刷新画布（不触发行选中）
+      status.addEventListener('click', function (e) {
+        var btn = e.target.closest ? e.target.closest('.seek-chip') : null;
+        if (btn) {
+          e.stopPropagation();
+          seek(Number(btn.dataset.t));
+        }
+      });
 
       row.appendChild(badge);
       row.appendChild(status);
