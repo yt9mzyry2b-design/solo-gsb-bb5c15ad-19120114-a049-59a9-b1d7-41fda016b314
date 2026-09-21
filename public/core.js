@@ -21,6 +21,19 @@
  * 二次项系数可正可负（半径快速张开时为负），统一按求根公式精确求解并
  * 钳制到重叠时间窗；再合并跨段相邻区间。全程没有任何离散帧抽样——
  * 解出的就是碰撞发生的精确时间区间。
+ *
+ * 此外对每一对连续求"最小安全余量"及其发生时刻：
+ *
+ *     m(t) = |r(t)| - R(t) = sqrt(q(t)) - (c + d t)，q(t) = |u + v t|²
+ *
+ * sqrt(q) 是凸函数、R 是线性函数，故 m 在段内恒为凸函数：全局最小只可能
+ * 落在段端点，或 |v| > |d| 时唯一的驻点
+ *
+ *     t* = (-u·v + d·sqrt((|u|²|v|² - (u·v)²) / (|v|² - d²))) / |v|²
+ *
+ * 退化情形由同一公式/分支覆盖：相对静止（v = 0）或半径变化比相对运动快
+ * （|v| ≤ |d|）时 m 单调，最小在端点；相对轨迹过原点（|u×v| = 0，距离
+ * 可为零）时驻点即 |r| = 0 的尖点。同样全程解析，不做任何时间采样。
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) {
@@ -272,9 +285,10 @@
 
   /**
    * 两人在同一时间窗 [lo, hi] 内各自线性运动、半径各自线性变化，
-   * 精确求碰撞时间区间。同时更新最小间距与半径和极值追踪对象。
+   * 精确求碰撞时间区间。同时更新最小几何间距、半径和极值与
+   * 最小安全余量（m(t) = |r(t)| - R(t)）追踪对象。
    */
-  function analyzeOverlap(sA, sB, lo, hi, minRef, rangeRef) {
+  function analyzeOverlap(sA, sB, lo, hi, minRef, rangeRef, marginRef) {
     // 相对运动 r(t) = u + v t
     var ux = sA.x0 - sB.x0;
     var uy = sA.y0 - sB.y0;
@@ -313,6 +327,28 @@
       minRef.t = tDist;
     }
 
+    // —— 最小安全余量 m(t) = |r(t)| - R(t)：凸函数，候选点只有端点与唯一驻点 ——
+    // 驻点存在条件 |v| > |d|（否则 m 单调，端点取最小）；
+    // cross2 = |u×v|² = 0 时驻点即距离为零的尖点，同一公式覆盖。
+    var dd = d * d;
+    var mcands = [lo, hi];
+    if (v2 - dd > EPS) {
+      var cross2 = u2 * v2 - uv * uv;
+      if (cross2 < 0) cross2 = 0; // 浮点误差钳制（理论值 ≥ 0）
+      var ts = (-uv + d * Math.sqrt(cross2 / (v2 - dd))) / v2;
+      if (ts > lo && ts < hi) mcands.push(ts);
+    }
+    for (var ci = 0; ci < mcands.length; ci++) {
+      var tm = mcands[ci];
+      var mx = ux + vx * tm;
+      var my = uy + vy * tm;
+      var mg = Math.sqrt(mx * mx + my * my) - (c + d * tm);
+      if (mg < marginRef.margin) {
+        marginRef.margin = mg;
+        marginRef.t = tm;
+      }
+    }
+
     // —— 碰撞区间 |r(t)| ≤ R(t) 的解析解 ——
     // |u + v t|² ≤ (c + d t)² ⇔ A t² + B t + C ≤ 0
     var A = v2 - d * d;
@@ -335,7 +371,9 @@
    * 返回 {
    *   aId,bId,aName,bName, radiusSum, radiusSumMin, radiusSumMax,
    *   intervals:[[t0,t1],...],     // 合并后的精确碰撞区间
-   *   minDistance, firstContact,   // 首次碰撞时刻（无则 null）
+   *   minDistance, minDistanceT,   // 最小几何间距（与半径无关）及时刻
+   *   minMargin, minMarginT,       // 最小安全余量 distance-(rA+rB) 及发生时刻
+   *   firstContact,                // 首次碰撞时刻（无则 null）
    *   lastRelease
    * }
    */
@@ -350,6 +388,7 @@
     var raw = [];
     var minRef = { dist: Infinity, t: 0 };
     var rangeRef = { min: Infinity, max: -Infinity };
+    var marginRef = { margin: Infinity, t: 0 };
 
     var i = 0;
     var j = 0;
@@ -359,7 +398,7 @@
       var lo = Math.max(a.t0, b.t0);
       var hi = Math.min(a.t1, b.t1);
       if (hi - lo > EPS) {
-        var found = analyzeOverlap(a, b, lo, hi, minRef, rangeRef);
+        var found = analyzeOverlap(a, b, lo, hi, minRef, rangeRef, marginRef);
         for (var k = 0; k < found.length; k++) raw.push(found[k]);
       }
       if (a.t1 < b.t1 - EPS) i++;
@@ -374,6 +413,10 @@
     if (!isFinite(rangeRef.min)) {
       rangeRef = { min: rSumBase, max: rSumBase };
     }
+    if (!isFinite(marginRef.margin)) {
+      // 不可达（buildSegments 恒覆盖 [0, duration]），兜底保持字段有限
+      marginRef = { margin: -rSumBase, t: 0 };
+    }
 
     return {
       aId: pa.id,
@@ -386,6 +429,8 @@
       intervals: intervals,
       minDistance: minRef.dist,
       minDistanceT: minRef.t,
+      minMargin: marginRef.margin,
+      minMarginT: marginRef.t,
       firstContact: intervals.length ? intervals[0][0] : null,
       lastRelease: intervals.length ? intervals[intervals.length - 1][1] : null,
       collision: intervals.length > 0
@@ -395,6 +440,7 @@
   /**
    * 分析整个场景：枚举全部 C(n,2) 双人组合。
    * scene: { duration, performers:[performer...] }
+   * pairs 按最小安全余量升序（余量越小越危险，碰撞对自然排在安全对之前）。
    */
   function analyzeScene(scene) {
     var duration = Number(scene.duration);
@@ -418,6 +464,15 @@
     pairs.forEach(function (p) {
       if (!closestPair || p.minDistance < closestPair.minDistance) closestPair = p;
     });
+    var marginPair = null;
+    pairs.forEach(function (p) {
+      if (!marginPair || p.minMargin < marginPair.minMargin) marginPair = p;
+    });
+
+    // 统一按最小安全余量升序返回（前端逐对列表与 /api/analyze 同一顺序）
+    pairs.sort(function (a, b) {
+      return a.minMargin - b.minMargin;
+    });
 
     return {
       duration: duration,
@@ -431,6 +486,11 @@
       minDistanceT: closestPair ? closestPair.minDistanceT : null,
       minDistancePair: closestPair
         ? [closestPair.aId, closestPair.bId]
+        : null,
+      minMargin: marginPair ? marginPair.minMargin : null,
+      minMarginT: marginPair ? marginPair.minMarginT : null,
+      minMarginPair: marginPair
+        ? [marginPair.aId, marginPair.bId]
         : null
     };
   }

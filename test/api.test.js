@@ -68,6 +68,43 @@ test('POST /api/analyze：接受关键帧 r 并按可变半径解析（首碰 t=
   assert.ok(Math.abs(pair.radiusSumMax - 60) < 1e-9);
 });
 
+test('POST /api/analyze：返回最小安全余量 minMargin/minMarginT，pairs 按余量升序', async () => {
+  const r = await postAnalyze(baseScene());
+  assert.equal(r.status, 200);
+  const pair = r.json.pairs[0];
+  // 甲静止 x=70（r 10→50），乙 r=10 从 0→100：
+  // t=7 时距离为 0、半径和恒 60 → 最小安全余量 = −60 @ t=7
+  assert.ok(Math.abs(pair.minMargin - (-60)) < 1e-6, `minMargin 应为 -60，实际 ${pair.minMargin}`);
+  assert.ok(Math.abs(pair.minMarginT - 7) < 1e-6, `minMarginT 应为 7，实际 ${pair.minMarginT}`);
+  // 场景级字段与首对一致
+  assert.ok(Math.abs(r.json.minMargin - pair.minMargin) < 1e-12);
+  assert.ok(Math.abs(r.json.minMarginT - pair.minMarginT) < 1e-12);
+  assert.deepEqual(r.json.minMarginPair, [pair.aId, pair.bId]);
+  // 升序
+  for (let i = 1; i < r.json.pairs.length; i++) {
+    assert.ok(r.json.pairs[i].minMargin >= r.json.pairs[i - 1].minMargin);
+  }
+});
+
+test('POST /api/analyze：多对场景 pairs 严格按最小安全余量升序', async () => {
+  const s = await getJson('/api/sample');
+  const r = await postAnalyze({ duration: s.json.duration, performers: s.json.performers });
+  assert.equal(r.status, 200);
+  assert.equal(r.json.pairCount, 6);
+  r.json.pairs.forEach((p) => {
+    assert.ok(typeof p.minMargin === 'number' && isFinite(p.minMargin), '每对都带有限 minMargin');
+    assert.ok(typeof p.minMarginT === 'number' && isFinite(p.minMarginT), '每对都带有限 minMarginT');
+    assert.equal(p.collision, p.minMargin <= 1e-9, '余量 ≤ 0 ⟺ 碰撞');
+  });
+  for (let i = 1; i < r.json.pairs.length; i++) {
+    assert.ok(
+      r.json.pairs[i].minMargin >= r.json.pairs[i - 1].minMargin - 1e-12,
+      'pairs 按余量升序'
+    );
+  }
+  assert.ok(Math.abs(r.json.minMargin - r.json.pairs[0].minMargin) < 1e-12);
+});
+
 test('POST /api/analyze：返回的 scene 中缺省 r 被解析为继承值，显式 r 原样保留', async () => {
   const r = await postAnalyze(baseScene());
   assert.equal(r.status, 200);

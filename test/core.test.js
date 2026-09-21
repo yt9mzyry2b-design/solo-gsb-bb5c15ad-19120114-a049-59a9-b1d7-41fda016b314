@@ -290,3 +290,138 @@ test('内置样例含关键帧半径且不改变原有碰撞结论', () => {
   assert.equal(p34.collision, true);
   approx(p34.firstContact, 2.60, 0.02);
 });
+
+// ---------- 最小安全余量 minMargin = min_t (distance(t) - (rA+rB)) ----------
+
+test('最小安全余量：相对静止且半径恒定，余量恒为 dist − 半径和', () => {
+  // 两人同速平行，间距恒 40，半径和恒 50 → 余量恒 −10（相对静止退化）
+  const a = { id: 'a', radius: 30, keys: [{ t: 0, x: 0, y: 0 }, { t: 12, x: 120, y: 0 }] };
+  const b = { id: 'b', radius: 20, keys: [{ t: 0, x: 0, y: 40 }, { t: 12, x: 120, y: 40 }] };
+  const r = core.analyzePair(a, b, T);
+  approx(r.minMargin, -10, 1e-7, '余量 = 40 − 50');
+  assert.ok(r.minMarginT >= 0 && r.minMarginT <= 12, '发生时刻在窗内');
+  assert.equal(r.collision, true, '余量 ≤ 0 ⟺ 碰撞');
+});
+
+test('最小安全余量：距离为零的正面相撞，余量 = −半径和 @ 相遇时刻', () => {
+  const a = { id: 'a', radius: 10, keys: [{ t: 0, x: 0, y: 0 }, { t: 12, x: 120, y: 0 }] };
+  const b = { id: 'b', radius: 10, keys: [{ t: 0, x: 120, y: 0 }, { t: 12, x: 0, y: 0 }] };
+  const r = core.analyzePair(a, b, T);
+  approx(r.minMargin, -20, 1e-7, 't=6 距离为 0，余量 = −20');
+  approx(r.minMarginT, 6, 1e-7);
+});
+
+test('最小安全余量：安全对余量为正，等于最近间距 − 半径和（半径恒定）', () => {
+  // A 沿 y=30 水平经过，B 静止原点；rSum=20 → 余量 = 30 − 20 = 10 @ t=5
+  const a = { id: 'a', radius: 10, keys: [{ t: 0, x: 0, y: 30 }, { t: 10, x: 100, y: 30 }] };
+  const b = { id: 'b', radius: 10, keys: [{ t: 0, x: 50, y: 0 }] };
+  const r = core.analyzePair(a, b, T);
+  assert.equal(r.collision, false);
+  approx(r.minMargin, 10, 1e-6);
+  approx(r.minMarginT, 5, 1e-6);
+});
+
+test('最小安全余量：可变半径下驻点落在段内（凸函数唯一驻点，非采样）', () => {
+  // A 静止原点，r: 0→8 于 t∈[0,4]（半径和变化率 d=+2）；
+  // B 以 10/s 从 (-30,40) 走到 (10,40)，r=0
+  const a = { id: 'a', radius: 0, keys: [{ t: 0, x: 0, y: 0, r: 0 }, { t: 4, x: 0, y: 0, r: 8 }] };
+  const b = { id: 'b', radius: 0, keys: [{ t: 0, x: -30, y: 40 }, { t: 4, x: 10, y: 40 }] };
+  const r = core.analyzePair(a, b, 4);
+  // u=(-30,40), v=(10,0)：v2=100, uv=-300, cross2=2500*100-300²=160000
+  // t* = (300 + 2·√(160000/96))/100 ≈ 3.8165 ∈ (0,4)
+  const ts = (300 + 2 * Math.sqrt(160000 / 96)) / 100;
+  const expect = Math.hypot(-30 + 10 * ts, 40) - 2 * ts;
+  approx(r.minMarginT, ts, 1e-7, '驻点时刻');
+  approx(r.minMargin, expect, 1e-7, '驻点处余量');
+  approx(r.minMargin, 33.19, 0.01);
+  assert.equal(r.collision, false, '余量 > 0 ⟺ 安全');
+});
+
+test('最小安全余量：相对静止 + 半径张开，余量线性递减在端点取最小', () => {
+  // 两人完全静止相距 30；A 半径 t∈[2,6] 由 10 升到 50，B 恒 10
+  const a = {
+    id: 'a', radius: 10,
+    keys: [{ t: 0, x: 0, y: 0, r: 10 }, { t: 2, x: 0, y: 0, r: 10 }, { t: 6, x: 0, y: 0, r: 50 }]
+  };
+  const b = { id: 'b', radius: 10, keys: [{ t: 0, x: 30, y: 0 }] };
+  const r = core.analyzePair(a, b, 8);
+  // t≥6 半径和恒 60 → 余量恒 30−60 = −30（平台段）
+  approx(r.minMargin, -30, 1e-7);
+  assert.ok(r.minMarginT >= 6 - 1e-9 && r.minMarginT <= 8, '最小余量出现在张开后的平台段');
+});
+
+test('最小安全余量：距离为零且相对静止（两人全程重合）', () => {
+  const a = { id: 'a', radius: 10, keys: [{ t: 0, x: 5, y: 5 }] };
+  const b = { id: 'b', radius: 15, keys: [{ t: 0, x: 5, y: 5 }] };
+  const r = core.analyzePair(a, b, 8);
+  approx(r.minDistance, 0, 1e-9);
+  approx(r.minMargin, -25, 1e-9, '余量恒为 −(10+15)');
+  assert.equal(r.collision, true);
+});
+
+test('最小安全余量：与细采样对照且与碰撞判定一致（实现本身不采样）', () => {
+  const scenes = [
+    core.builtinScene(),
+    {
+      duration: 10,
+      performers: [
+        { id: 'a', radius: 10, keys: [{ t: 0, x: 70, y: 0, r: 10 }, { t: 4, x: 70, y: 0, r: 50 }] },
+        { id: 'b', radius: 10, keys: [{ t: 0, x: 0, y: 0 }, { t: 10, x: 100, y: 0 }] }
+      ]
+    },
+    {
+      duration: 8,
+      performers: [
+        { id: 'a', radius: 0, keys: [{ t: 0, x: 0, y: 0, r: 0 }, { t: 4, x: 0, y: 0, r: 80 }] },
+        { id: 'b', radius: 0, keys: [{ t: 0, x: 0, y: 0 }, { t: 8, x: 80, y: 0 }] }
+      ]
+    },
+    {
+      duration: 12,
+      performers: [
+        { id: 'a', radius: 5, keys: [{ t: 1, x: 0, y: 0 }, { t: 5, x: 200, y: 100 }, { t: 11, x: 40, y: 300 }] },
+        { id: 'b', radius: 25, keys: [{ t: 0, x: 300, y: 200, r: 40 }, { t: 12, x: 100, y: 100, r: 5 }] }
+      ]
+    }
+  ];
+  scenes.forEach((scene, si) => {
+    const r = core.analyzeScene(scene);
+    r.pairs.forEach((pair) => {
+      const pa = scene.performers.find((p) => p.id === pair.aId);
+      const pb = scene.performers.find((p) => p.id === pair.bId);
+      let best = Infinity;
+      for (let i = 0; i <= 20000; i++) {
+        const t = (scene.duration * i) / 20000;
+        const sa = core.stateAt(pa.keys, t, pa.radius);
+        const sb = core.stateAt(pb.keys, t, pb.radius);
+        const m = Math.hypot(sa.x - sb.x, sa.y - sb.y) - sa.r - sb.r;
+        if (m < best) best = m;
+      }
+      assert.ok(
+        pair.minMargin <= best + 1e-9,
+        `场景${si} 对 ${pair.aId}-${pair.bId}：解析余量 ${pair.minMargin} 不应大于采样最小值 ${best}`
+      );
+      approx(pair.minMargin, best, 2e-2, `场景${si} 对 ${pair.aId}-${pair.bId} 解析余量≈采样最小值`);
+      assert.equal(
+        pair.collision, pair.minMargin <= 1e-9,
+        `场景${si} 对 ${pair.aId}-${pair.bId}：余量 ≤ 0 ⟺ 碰撞`
+      );
+    });
+  });
+});
+
+test('analyzeScene：pairs 按最小安全余量升序，场景级 minMargin 与首对一致', () => {
+  const r = core.analyzeScene(core.builtinScene());
+  for (let i = 1; i < r.pairs.length; i++) {
+    assert.ok(
+      r.pairs[i].minMargin >= r.pairs[i - 1].minMargin - 1e-12,
+      `第 ${i} 对余量 ${r.pairs[i].minMargin} 应 ≥ 前一对 ${r.pairs[i - 1].minMargin}`
+    );
+  }
+  approx(r.minMargin, r.pairs[0].minMargin, 1e-12, '场景级最小余量 = 首对余量');
+  approx(r.minMarginT, r.pairs[0].minMarginT, 1e-12);
+  assert.deepEqual(r.minMarginPair, [r.pairs[0].aId, r.pairs[0].bId]);
+  // 碰撞对余量 ≤ 0 < 安全对余量，故碰撞对全部排在安全对之前
+  const firstSafe = r.pairs.findIndex((p) => !p.collision);
+  assert.ok(r.pairs.slice(0, firstSafe === -1 ? r.pairs.length : firstSafe).every((p) => p.collision));
+});

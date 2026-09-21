@@ -266,3 +266,55 @@ test('播放时当前安全半径随关键帧插值实时呈现（stateAt）', a
   assert.ok(Math.abs(st.r - 40) < 1e-9, `t=6 插值半径应为 40，实际 ${st.r}`);
   dom.window.close();
 });
+
+test('最小安全余量：摘要展示、逐对升序、点击余量时刻跳转播放头', async () => {
+  const dom = await boot();
+  const { window } = dom;
+  const doc = window.document;
+
+  const analysis = core.analyzeScene(core.builtinScene());
+
+  // 摘要：全局最小安全余量与当事人
+  const sumMargin = doc.getElementById('sum-margin').textContent;
+  assert.ok(
+    sumMargin.includes(analysis.minMargin.toFixed(2)),
+    `摘要最小余量「${sumMargin}」应含 ${analysis.minMargin.toFixed(2)}`
+  );
+  assert.match(doc.getElementById('sum-margin-who').textContent, /@\s*-?[\d.]+\s*s/);
+
+  // 逐对列表：按最小安全余量升序，与引擎/API 同一顺序
+  const rows = [...doc.querySelectorAll('.pair-row')];
+  assert.equal(rows.length, 6);
+  rows.forEach((row, i) => {
+    const pair = analysis.pairs[i];
+    assert.ok(
+      row.textContent.includes(pair.aName) && row.textContent.includes(pair.bName),
+      `第 ${i} 行应为 ${pair.aName}×${pair.bName}（余量 ${pair.minMargin.toFixed(2)}）`
+    );
+    assert.ok(row.textContent.includes('最小余量'), '每行展示最小安全余量');
+    assert.ok(row.querySelector('.t-jump'), '每行余量时刻可点击');
+    if (i > 0) {
+      assert.ok(pair.minMargin >= analysis.pairs[i - 1].minMargin - 1e-12, '余量升序');
+    }
+  });
+
+  // 点击首对（余量最小）的余量时刻：播放头跳转到该时刻并刷新画布
+  const first = analysis.pairs[0];
+  rows[0].querySelector('.t-jump').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const tv = Number(doc.getElementById('time-input').value);
+  assert.ok(
+    Math.abs(tv - first.minMarginT) < 0.01,
+    `播放头应跳到 ${first.minMarginT}，实际 ${tv}`
+  );
+  assert.ok(doc.getElementById('playhead').style.left, '播放头位置已刷新');
+
+  // 点击摘要余量行：跳转到全局最小余量时刻
+  doc.getElementById('time-input').value = '0';
+  doc.getElementById('sum-margin-row').dispatchEvent(new window.MouseEvent('click', { bubbles: true }));
+  const tv2 = Number(doc.getElementById('time-input').value);
+  assert.ok(
+    Math.abs(tv2 - analysis.minMarginT) < 0.01,
+    `摘要点击应跳到 ${analysis.minMarginT}，实际 ${tv2}`
+  );
+  dom.window.close();
+});

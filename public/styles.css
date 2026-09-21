@@ -294,6 +294,17 @@ input:focus { outline: none; border-color: var(--accent); }
 .summary-item strong { font-size: 15px; font-variant-numeric: tabular-nums; }
 .summary-item strong.danger { color: var(--danger); }
 .summary-item strong.ok { color: var(--ok); }
+.summary-row.clickable { cursor: pointer; border-radius: 6px; }
+.summary-row.clickable:hover strong { color: var(--accent); }
+
+/* 逐对行内可点击的时刻（跳转播放头） */
+.t-jump {
+  color: var(--accent);
+  cursor: pointer;
+  text-decoration: underline dotted;
+  text-underline-offset: 2px;
+}
+.t-jump:hover { color: #79b8ff; text-decoration-style: solid; }
 
 /* 逐对结果 */
 .pair-list { padding: 6px 0; max-height: 360px; overflow-y: auto; }

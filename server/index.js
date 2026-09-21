@@ -51,6 +51,9 @@ function resolveScene(duration, performers) {
  * 场景碰撞分析（与前端同一份解析引擎，便于集成/校验）。
  * body: { duration, performers:[{name?,radius,keys:[{t,x,y,r?}]}] }
  * 关键帧 r 为可选安全半径（开伞/展开道具），缺省继承表演者 radius。
+ * 每对返回精确碰撞区间与最小安全余量 minMargin/minMarginT
+ * （distance(t)-(rA+rB) 的连续全局最小值及发生时刻），pairs 按余量升序；
+ * 场景级另附 minMargin/minMarginT/minMarginPair。
  */
 app.post('/api/analyze', (req, res) => {
   try {
